@@ -2,14 +2,15 @@ VERSION < v"0.7.0-beta2.199" && __precompile__()
 
 module MDCT
 using Compat
-export mdct, imdct
+using Compat.LinearAlgebra
+export mdct, imdct, plan_mdct, plan_imdct
 
 if VERSION < v"0.7.0-DEV.602"
     using Base.FFTW
-    import Base.FFTW: fftwNumber, r2r, r2r!, REDFT11
+    import Base.FFTW: fftwNumber, r2r, r2r!, REDFT11, plan_r2r!, plan_r2r
 else
     using FFTW
-    import FFTW: fftwNumber, r2r, r2r!, REDFT11
+    import FFTW: fftwNumber, r2r, r2r!, REDFT11, plan_r2r!, plan_r2r
 end
 
 fftwsimilar(X::AbstractArray{T}, sz) where {T<:fftwNumber} = Array{T}(undef, sz...)
@@ -62,5 +63,40 @@ end
 
 imdct(X::AbstractVector{T}) where {T<:Number} =
     imdct(copy!(fftwsimilar(X, size(X)), X))
+
+function get_plan_matrices(T::DataType, N::Integer)
+    IN4 = Diagonal(ones(T, div(N,4)))
+    JN4 = rotl90(IN4)
+    O = zeros(T, div(N,4), div(N,4))
+    P = [O IN4; O -JN4; JN4 O; IN4 O]
+    S = [-IN4 O; O IN4]
+    return P, S
+end
+
+function plan_mdct(X::AbstractVector{T}) where {T<:Number}
+    N = length(X)
+    if mod(N, 4) != 0
+        throw(ArgumentError("mdct requires an multiple-of-4 vector length"))
+    end
+    P, S = get_plan_matrices(T, N)
+    SP = 0.5*S*transpose(P)
+    C = plan_r2r!(X[1:div(N,2)], REDFT11)
+    return function(X::AbstractVector{T}) where {T<:Number}
+        return C*(SP*X)
+    end
+end
+
+function plan_imdct(X::AbstractVector{T}) where {T<:Number}
+    N = length(X)
+    if isodd(N)
+        throw(ArgumentError("imdct requires an even vector length"))
+    end
+    P, S = get_plan_matrices(T, 2*N)
+    PS = 0.5/N*P*S
+    C = plan_r2r(X, REDFT11)
+    return function(X::AbstractVector{T}) where {T<:Number}
+        return PS*(C*X)
+    end
+end
 
 end # MDCT
