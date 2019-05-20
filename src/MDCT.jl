@@ -4,7 +4,7 @@ module MDCT
 using Compat
 using Compat.LinearAlgebra
 import AbstractFFTs
-export mdct, imdct, plan_mdct
+export mdct, imdct, plan_mdct, plan_imdct
 import Base.*
 import Compat.LinearAlgebra.mul!
 
@@ -67,17 +67,17 @@ end
 imdct(X::AbstractVector{T}) where {T<:Number} =
     imdct(copy!(fftwsimilar(X, size(X)), X))
 
-mutable struct MDCTPlan{T<:fftwNumber, N} <: AbstractFFTs.Plan{T}
+mutable struct MDCTPlan{T<:fftwNumber, N, inv} <: AbstractFFTs.Plan{T}
     plan::FFTW.r2rFFTWPlan{T} # plan_r2r! REDFT11 plan
     pinv::AbstractFFTs.Plan{T}
-    MDCTPlan{T, N}(plan) where {T, N} = new(plan)
+    MDCTPlan{T, N, inv}(plan) where {T, N, inv} = new(plan)
 end
 
 Base.size(p::MDCTPlan) = (p.N2, 2*p.N2)
 
-function mul!(Y::StridedArray{T}, p::MDCTPlan{T, N}, X::AbstractArray{T}) where {T<:Number, N}
-    N2 = div(N,2)
+function mul!(Y::StridedArray{T}, p::MDCTPlan{T, N, false}, X::AbstractArray{T}) where {T<:Number, N}
     @boundscheck (length(X) == 2*N && length(Y) == N) || throw(DimensionMismatch())
+    N2 = div(N,2)
     @inbounds for i = 1:N2
         Y[i] = -0.5 * (X[(3*N2+1)-i] + X[3*N2+i])
         Y[N2+i] = -0.5 * (X[(2*N2+1)-i] - X[i])
@@ -85,20 +85,40 @@ function mul!(Y::StridedArray{T}, p::MDCTPlan{T, N}, X::AbstractArray{T}) where 
     return p.plan * Y
 end
 
+function mul!(Z::StridedArray{T}, p::MDCTPlan{T, N, true}, X::AbstractArray{T}) where {T<:Number, N}
+    @boundscheck length(Z) == N || throw(DimensionMismatch())
+    Y = p.plan*copy(X)
+    N1 = div(N,2)
+    N2 = div(N1,2)
+    s = 0.5 / N1
+    @inbounds for i = 1:N2
+        Z[N1+1-i] = -(Z[i] = Y[N2+i]*s)
+        Z[N1+N2+1-i] = (Z[N1+N2+i] = -Y[i]*s)
+    end
+    return Z
+end
+
 function *(p::MDCTPlan{T, N}, X::AbstractArray{T}) where {T<:Number, N}
     Y = fftwsimilar(X, N)
-    @boundscheck length(X) == 2*N || throw(DimensionMismatch())
-    return @inbounds mul!(Y, p, X)
+    return mul!(Y, p, X)
 end
 
 function plan_mdct(X::AbstractVector{T}) where {T<:Number}
     N = div(length(X), 2);
-    Y = fftwsimilar(X, N)
     if mod(N, 4) != 0
         throw(ArgumentError("mdct requires a multiple-of-4 vector length"))
         # FIXME: handle odd case via DCT-III?
     end
-    return MDCTPlan{T, N}(plan_r2r!(view(X, 1:N), REDFT11))
+    return MDCTPlan{T, N, false}(plan_r2r!(view(X, 1:N), REDFT11))
+end
+
+function plan_imdct(X::AbstractVector{T}) where {T<:Number}
+    sz = length(X)
+    if isodd(sz)
+        throw(ArgumentError("imdct requires an even vector length"))
+        # FIXME: handle odd case via DCT-II?
+    end
+    return MDCTPlan{T, 2*sz, true}(plan_r2r!(X, REDFT11))
 end
 
 end # MDCT
