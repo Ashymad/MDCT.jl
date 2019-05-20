@@ -3,7 +3,10 @@ VERSION < v"0.7.0-beta2.199" && __precompile__()
 module MDCT
 using Compat
 using Compat.LinearAlgebra
-export mdct, imdct, plan_mdct, plan_imdct
+import AbstractFFTs
+export mdct, imdct, plan_mdct
+import Base.*
+import Compat.LinearAlgebra.mul!
 
 if VERSION < v"0.7.0-DEV.602"
     using Base.FFTW
@@ -64,39 +67,38 @@ end
 imdct(X::AbstractVector{T}) where {T<:Number} =
     imdct(copy!(fftwsimilar(X, size(X)), X))
 
-function get_plan_matrices(T::DataType, N::Integer)
-    IN4 = Diagonal(ones(T, div(N,4)))
-    JN4 = rotl90(IN4)
-    O = zeros(T, div(N,4), div(N,4))
-    P = [O IN4; O -JN4; JN4 O; IN4 O]
-    S = [-IN4 O; O IN4]
-    return P, S
+mutable struct MDCTPlan{T<:fftwNumber, N} <: AbstractFFTs.Plan{T}
+    plan::FFTW.r2rFFTWPlan{T} # plan_r2r! REDFT11 plan
+    pinv::AbstractFFTs.Plan{T}
+    MDCTPlan{T, N}(plan) where {T, N} = new(plan)
+end
+
+Base.size(p::MDCTPlan) = (p.N2, 2*p.N2)
+
+function mul!(Y::StridedArray{T}, p::MDCTPlan{T, N}, X::AbstractArray{T}) where {T<:Number, N}
+    N2 = div(N,2)
+    @boundscheck (length(X) == 2*N && length(Y) == N) || throw(DimensionMismatch())
+    @inbounds for i = 1:N2
+        Y[i] = -0.5 * (X[(3*N2+1)-i] + X[3*N2+i])
+        Y[N2+i] = -0.5 * (X[(2*N2+1)-i] - X[i])
+    end
+    return p.plan * Y
+end
+
+function *(p::MDCTPlan{T, N}, X::AbstractArray{T}) where {T<:Number, N}
+    Y = fftwsimilar(X, N)
+    @boundscheck length(X) == 2*N || throw(DimensionMismatch())
+    return @inbounds mul!(Y, p, X)
 end
 
 function plan_mdct(X::AbstractVector{T}) where {T<:Number}
-    N = length(X)
+    N = div(length(X), 2);
+    Y = fftwsimilar(X, N)
     if mod(N, 4) != 0
-        throw(ArgumentError("mdct requires an multiple-of-4 vector length"))
+        throw(ArgumentError("mdct requires a multiple-of-4 vector length"))
+        # FIXME: handle odd case via DCT-III?
     end
-    P, S = get_plan_matrices(T, N)
-    SP = 0.5*S*transpose(P)
-    C = plan_r2r!(X[1:div(N,2)], REDFT11)
-    return function(X::AbstractVector{T}) where {T<:Number}
-        return C*(SP*X)
-    end
-end
-
-function plan_imdct(X::AbstractVector{T}) where {T<:Number}
-    N = length(X)
-    if isodd(N)
-        throw(ArgumentError("imdct requires an even vector length"))
-    end
-    P, S = get_plan_matrices(T, 2*N)
-    PS = 0.5/N*P*S
-    C = plan_r2r(X, REDFT11)
-    return function(X::AbstractVector{T}) where {T<:Number}
-        return PS*(C*X)
-    end
+    return MDCTPlan{T, N}(plan_r2r!(view(X, 1:N), REDFT11))
 end
 
 end # MDCT
