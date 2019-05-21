@@ -104,11 +104,12 @@ function *(p::MDCTPlan{T, N}, X::AbstractArray{T}) where {T<:Number, N}
 end
 
 function plan_mdct(X::AbstractVector{T}) where {T<:Number}
-    N = div(length(X), 2);
-    if mod(N, 4) != 0
+    sz = length(X)
+    if mod(sz, 4) != 0
         throw(ArgumentError("mdct requires a multiple-of-4 vector length"))
         # FIXME: handle odd case via DCT-III?
     end
+    N = div(sz, 2);
     return MDCTPlan{T, N, false}(plan_r2r!(view(X, 1:N), REDFT11))
 end
 
