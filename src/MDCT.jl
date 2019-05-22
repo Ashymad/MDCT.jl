@@ -5,7 +5,7 @@ using Compat
 using Compat.LinearAlgebra
 import AbstractFFTs
 export mdct, imdct, plan_mdct, plan_imdct
-import Base.*
+import Base: *, size
 import Compat.LinearAlgebra.mul!
 
 if VERSION < v"0.7.0-DEV.602"
@@ -73,7 +73,8 @@ mutable struct MDCTPlan{T<:fftwNumber, N, inv} <: AbstractFFTs.Plan{T}
     MDCTPlan{T, N, inv}(plan) where {T, N, inv} = new(plan)
 end
 
-Base.size(p::MDCTPlan) = (p.N2, 2*p.N2)
+size(p::MDCTPlan{T, N, true}) where {T<:Number, N} = (div(N,2), N)
+size(p::MDCTPlan{T, N, false}) where {T<:Number, N} = (2*N, N)
 
 function mul!(Y::StridedArray{T}, p::MDCTPlan{T, N, false}, X::AbstractArray{T}) where {T<:Number, N}
     @boundscheck (length(X) == 2*N && length(Y) == N) || throw(DimensionMismatch())
